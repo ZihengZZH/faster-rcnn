@@ -1,0 +1,365 @@
+"""
+Faster R-CNN in Keras
+---
+# Reference:
+
+"""
+
+from __future__ import absolute_import
+from __future__ import division
+from __future__ import print_function
+
+import os
+import sys
+import time
+import random
+import pickle
+import pprint
+import numpy as np
+from optparse import OptionParser
+
+from keras.layers import Input, Add, Dense
+from keras.layers import Activation, Flatten
+from keras.layers import Convolution2D, MaxPooling2D
+from keras.layers import ZeroPadding2D, AveragePooling2D
+from keras.layers import TimeDistributed
+from keras import backend as K
+from keras.optimizers import Adam, SGD, RMSprop
+from keras.models import Model
+from keras.callbacks import TensorBoard
+from keras.utils import generic_utils
+from keras.utils import plot_model
+import tensorflow as tf
+
+from .roi_pooling import RoiPoolingConv
+from . import roi_helpers 
+from .utils import data_generators
+from .utils import config
+from . import losses
+
+
+class FasterRCNN(object):
+    """
+    Faster R-CNN
+    ---
+    """
+    def __init__(self):
+        self.C = config.Config()
+        self.cnn_name = self.C.conv_net
+        if self.cnn_name == 'vgg16':
+            from .cnn import vgg16 as convNet
+        if self.cnn_name == 'vgg19':
+            from .cnn import vgg19 as convNet
+        elif self.cnn_name == 'resnet50':
+            from .cnn import resnet50 as convNet
+        else:
+            raise ValueError("CNN are limited to the following types: \n \
+                            1. VGG16 \n \
+                            2. VGG19 \n \
+                            3. ResNet50")
+        self.cnn_model = convNet
+        self.load_data()
+    
+    def get_weight_path(self):
+        return "%s_weights_tf.h5" % self.cnn_name
+
+    def load_data(self):
+        from .utils.parser_pascal import get_data
+        self.all_imgs, self.class_count, self.class_mapping = get_data(self.C.train_path)
+        if 'bg' not in self.class_count:
+            self.class_count['bg'] = 0
+            self.class_mapping['bg'] = len(self.class_mapping)
+        print("training images per classes")
+        pprint.pprint(self.class_count)
+        print("num of classes %d" % len(self.class_count))
+        random.shuffle(self.all_imgs)
+        num_imgs = len(self.all_imgs)
+
+        train_imgs = [s for s in self.all_imgs if s['imageset'] == 'train']
+        val_imgs = [s for s in self.all_imgs if s['imageset'] == 'val']
+        test_imgs = [s for s in self.all_imgs if s['imageset'] == 'test']
+
+        print('num of train samples {}'.format(len(train_imgs)))
+        print('num of val samples {}'.format(len(val_imgs)))
+        print('num of test samples {}'.format(len(test_imgs)))
+
+        # groundtruth anchor
+        self.data_gen_train = data_generators.get_anchor_gt(train_imgs, self.class_count, 
+                                        self.C, self.cnn_model.get_img_output_length, 
+                                        K.image_dim_ordering(), mode='train')
+        self.data_gen_val = data_generators.get_anchor_gt(val_imgs, self.class_count, 
+                                        self.C, self.cnn_model.get_img_output_length, 
+                                        K.image_dim_ordering(), mode='val')
+        self.data_gen_test = data_generators.get_anchor_gt(test_imgs, self.class_count, 
+                                        self.C, self.cnn_model.get_img_output_length, 
+                                        K.image_dim_ordering(), mode='test')
+
+    def region_proposal_net(self, base_layers, num_anchors):
+        """
+        Region Proposal Network
+        --
+        Args:
+            base_layers:
+            num_anchors:
+        """
+        if self.cnn_name == 'vgg16':
+            proposal_dim = 256
+        else:
+            proposal_dim = 512
+
+        x = Convolution2D(proposal_dim, (3, 3), 
+                        padding='same', 
+                        activation='relu', 
+                        kernel_initializer='normal', 
+                        name='proposal_conv1')(base_layers)
+
+        x_class = Convolution2D(num_anchors, (1, 1), 
+                                activation='sigmoid', 
+                                kernel_initializer='uniform', 
+                                name='proposal_out_class')(x)
+        x_regress = Convolution2D(num_anchors * 4, (1, 1), 
+                                activation='linear', 
+                                kernel_initializer='zero', 
+                                name='proposal_out_regress')(x)
+
+        return [x_class, x_regress, base_layers]
+
+    def classifier(self, base_layers, classifier_layer, input_roi, num_roi, num_class, trainable=True):
+        """
+        Args:
+            base_layers:
+            classifier_layer:
+            input_roi:
+            num_roi:
+            num_class:
+            trainable:
+        """
+        if self.cnn_name == 'vgg16':
+            pooling_regions = 7
+            input_shape = (num_roi, 7, 7, 512)
+        else:
+            pooling_regions = 14
+            input_shape = (num_roi, 14, 14, 1024)
+        
+        out_roi_pool = RoiPoolingConv(pooling_regions, num_roi)(
+                                    [base_layers, input_roi])
+        
+        if self.cnn_name == 'vgg16':
+            out = TimeDistributed(Flatten(name='flatten'))(out_roi_pool)
+            out = TimeDistributed(Dense(4096, activation='relu', name='fc1'))(out)
+            out = TimeDistributed(Dense(4096, activation='relu', name='fc2'))(out)
+        else:
+            out = classifier_layer(out_roi_pool, 
+                                    input_shape=input_shape,
+                                    trainable=True)
+            out = TimeDistributed(Flatten())(out)
+        
+        # classification task
+        out_class = TimeDistributed(Dense(num_class,
+                                        activation='softmax',
+                                        kernel_initializer='zero'),
+                                    name='dense_class_{}'.format(num_class))(out)
+        # regression task
+        out_regress = TimeDistributed(Dense(4 * (num_class - 1),
+                                            activation='linear',
+                                            kernel_initializer='zero'),
+                                    name='dense_regress_{}'.format(num_class))(out)
+        return [out_class, out_regress]
+
+    def _write_log(self, callback, names, logs, batch_no):
+        for name, value in zip(names, logs):
+            summary = tf.Summary()
+            summary_value = summary.value.add()
+            summary_value.simple_value = value
+            summary_value.tag = name
+            callback.writer.add_summary(summary, batch_no)
+            callback.writer.flush()
+
+    def build(self):
+        input_shape_img = (None, None, 3)
+        img_input = Input(shape=input_shape_img)
+        roi_input = Input(shape=(None, 4))
+        shared_layers = self.cnn_model.nn_base(img_input, trainable=True)
+        num_anchors = len(self.C.anchor_scales) * len(self.C.anchor_ratios)
+        
+        output_region_proposal = self.region_proposal_net(shared_layers, num_anchors)
+        output_classifier = self.classifier(shared_layers,
+                                            self.cnn_model.classifier_layers, 
+                                            roi_input, self.C.num_roi, 
+                                            num_class=len(self.class_count), trainable=True)
+        
+        self.model_region_proposal = Model(img_input, output_region_proposal[:2])
+        self.model_classifier = Model([img_input, roi_input], output_classifier)
+        self.model_all = Model([img_input, roi_input], output_region_proposal[:2] + output_classifier)
+
+        optimizer = Adam(lr=1e-5)
+        self.model_region_proposal.compile(optimizer=optimizer, 
+                                    loss=[losses.rpn_loss_cls(num_anchors), 
+                                        losses.rpn_loss_regr(num_anchors)])
+        self.model_classifier.compile(optimizer=optimizer, 
+                                    loss=[losses.class_loss_cls, 
+                                        losses.class_loss_regr(len(self.class_count)-1)], 
+                                    metrics={'dense_class_{}'.format(len(self.class_count)): 'accuracy'})
+        self.model_all.compile(optimizer='sgd', loss='mae')
+        print(self.model_all.summary())
+        plot_model(self.model_region_proposal, show_shapes=True, to_file='./frcnn/images/region_proposal.png')
+        plot_model(self.model_classifier, show_shapes=True, to_file='./frcnn/images/classifier.png')
+        plot_model(self.model_all, show_shapes=True, to_file='./frcnn/images/model_all.png')
+
+    def train(self):
+        if not os.path.isdir(self.C.log_path):
+            os.mkdir(self.C.log_path)
+        
+        callback = TensorBoard(self.C.log_path)
+        callback.set_model(self.model_all)
+
+        epoch_length = self.C.epoch_length
+        epochs = self.C.epochs
+        iter_num = 0
+        train_step = 0
+
+        losses = np.zeros((epoch_length, 5))
+        rpn_accuracy_monitor = []
+        rpn_accuracy_epoch = []
+        best_loss = np.Inf
+        start_time = time.time()
+
+        for epoch in range(epochs):
+            progbar = generic_utils.Progbar(epoch_length)
+            print('Epoch {}/{}'.format(epoch + 1, epochs))
+
+            while True:
+                if len(rpn_accuracy_monitor) == epoch_length and self.C.verbose:
+                    mean_overlapping_bboxes = float(sum(rpn_accuracy_monitor)) / len(rpn_accuracy_monitor)
+                    rpn_accuracy_monitor = []
+                    print('Average number of overlapping bounding boxes from RPN = {} for {} previous iterations'.format(mean_overlapping_bboxes, epoch_length))
+                    if mean_overlapping_bboxes == 0:
+                        print('RPN is not producing bounding boxes that overlap the ground truth boxes. Check RPN settings or keep training.')
+
+                # data generator
+                X, Y, img_data = next(self.data_gen_train)
+
+                loss_rpn = self.model_region_proposal.train_on_batch(X, Y)
+                self._write_log(callback, ['rpn_cls_loss', 'rpn_reg_loss'], loss_rpn, train_step)
+
+                P_rpn = self.model_region_proposal.predict_on_batch(X)
+
+                R = roi_helpers.rpn_to_roi(P_rpn[0], P_rpn[1], self.C, K.image_dim_ordering(), use_regr=True, overlap_thresh=0.7, max_boxes=300)
+                # note: calc_iou converts from (x1,y1,x2,y2) to (x,y,w,h) format
+                X2, Y1, Y2, IouS = roi_helpers.calc_iou(R, img_data, self.C, self.class_mapping)
+
+                if X2 is None:
+                    rpn_accuracy_monitor.append(0)
+                    rpn_accuracy_epoch.append(0)
+                    continue
+                
+                # sampling positive/negative samples
+                neg_samples = np.where(Y1[0, :, -1] == 1)
+                pos_samples = np.where(Y1[0, :, -1] == 0)
+
+                if len(neg_samples) > 0:
+                    neg_samples = neg_samples[0]
+                else:
+                    neg_samples = []
+
+                if len(pos_samples) > 0:
+                    pos_samples = pos_samples[0]
+                else:
+                    pos_samples = []
+
+                rpn_accuracy_monitor.append(len(pos_samples))
+                rpn_accuracy_epoch.append((len(pos_samples)))
+
+                if self.C.num_roi > 1:
+                    if len(pos_samples) < self.C.num_roi//2:
+                        selected_pos_samples = pos_samples.tolist()
+                    else:
+                        selected_pos_samples = np.random.choice(pos_samples, 
+                                                                self.C.num_roi//2, 
+                                                                replace=False).tolist()
+                    try:
+                        selected_neg_samples = np.random.choice(neg_samples, 
+                                                                self.C.num_roi-len(selected_pos_samples), 
+                                                                replace=False).tolist()
+                    except:
+                        selected_neg_samples = np.random.choice(neg_samples, 
+                                                                self.C.num_roi-len(selected_pos_samples), 
+                                                                replace=True).tolist()
+                    sel_samples = selected_pos_samples + selected_neg_samples
+                
+                else:
+                    # in the extreme case where num_roi = 1, we pick a random pos or neg sample
+                    selected_pos_samples = pos_samples.tolist()
+                    selected_neg_samples = neg_samples.tolist()
+                    if np.random.randint(0, 2):
+                        sel_samples = random.choice(neg_samples)
+                    else:
+                        sel_samples = random.choice(pos_samples)
+
+                loss_class = self.model_classifier.train_on_batch([X, X2[:, sel_samples, :]], 
+                                                                [Y1[:, sel_samples, :], 
+                                                                Y2[:, sel_samples, :]])
+                self._write_log(callback, 
+                                ['detection_cls_loss', 'detection_reg_loss', 'detection_acc'], 
+                                loss_class, train_step)
+                train_step += 1
+
+                losses[iter_num, 0] = loss_rpn[1]
+                losses[iter_num, 1] = loss_rpn[2]
+                losses[iter_num, 2] = loss_class[1]
+                losses[iter_num, 3] = loss_class[2]
+                losses[iter_num, 4] = loss_class[3]
+
+                iter_num += 1
+
+                progbar.update(iter_num, 
+                            [('rpn_cls', np.mean(losses[:iter_num, 0])), 
+                            ('rpn_regr', np.mean(losses[:iter_num, 1])),
+                            ('detector_cls', np.mean(losses[:iter_num, 2])), 
+                            ('detector_regr', np.mean(losses[:iter_num, 3]))])
+
+                if iter_num == epoch_length:
+                    loss_rpn_cls = np.mean(losses[:, 0])
+                    loss_rpn_regr = np.mean(losses[:, 1])
+                    loss_class_cls = np.mean(losses[:, 2])
+                    loss_class_regr = np.mean(losses[:, 3])
+                    class_acc = np.mean(losses[:, 4])
+
+                    mean_overlapping_bboxes = float(sum(rpn_accuracy_epoch)) / len(rpn_accuracy_epoch)
+                    rpn_accuracy_epoch = []
+
+                    if self.C.verbose:
+                        print('Mean number of bounding boxes from RPN overlapping ground truth boxes: {}'.format(mean_overlapping_bboxes))
+                        print('Classifier accuracy for bounding boxes from RPN: {}'.format(class_acc))
+                        print('Loss RPN classifier: {}'.format(loss_rpn_cls))
+                        print('Loss RPN regression: {}'.format(loss_rpn_regr))
+                        print('Loss Detector classifier: {}'.format(loss_class_cls))
+                        print('Loss Detector regression: {}'.format(loss_class_regr))
+                        print('Elapsed time: {}'.format(time.time() - start_time))
+
+                    curr_loss = loss_rpn_cls + loss_rpn_regr + loss_class_cls + loss_class_regr
+                    iter_num = 0
+                    start_time = time.time()
+
+                    self._write_log(callback,
+                            ['Elapsed_time', 'mean_overlapping_bboxes', 'mean_rpn_cls_loss', 
+                            'mean_rpn_reg_loss', 'mean_detection_cls_loss', 'mean_detection_reg_loss', 
+                            'mean_detection_acc', 'total_loss'],
+                            [time.time() - start_time, mean_overlapping_bboxes, loss_rpn_cls, 
+                            loss_rpn_regr, loss_class_cls, loss_class_regr, class_acc, curr_loss],
+                            epoch)
+
+                    if curr_loss < best_loss:
+                        if self.C.verbose:
+                            print('Total loss decreased from {} to {}, saving weights'.format(best_loss,curr_loss))
+                        best_loss = curr_loss
+                        self.model_all.save_weights(self.C.model_path)
+
+                    break
+        print("traing completed.")
+            
+    def test(self):
+        pass
+
+
+

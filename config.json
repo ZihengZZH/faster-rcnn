@@ -1,0 +1,23 @@
+{
+    "verbose": 1,
+    "conv_net": "resnet50",
+    "horizontal_flips": 1,
+    "vertical_flips": 1,
+    "rotate_90": 1,
+    "anchor_scales": [128, 256, 512],
+    "anchor_ratios": [[1,1], [1,2], [2,1]],
+    "img_small_size": 600,
+    "img_channel_mean": [103.939, 116.779, 123.68],
+    "img_scale_factor": 1.0,
+    "num_roi": 300,
+    "stride": 16,
+    "balanced_classes": 0,
+    "std_scaling": 4.0,
+    "class_regress_std": [8.0, 8.0, 4.0, 4.0],
+    "rpn_min_overlap": 0.3,
+    "rpn_max_overlap": 0.7,
+    "classifier_min_overlap": 0.1,
+    "classifier_max_overlap": 0.5,
+    "epochs": 2000,
+    "epoch_length": 1000
+}
