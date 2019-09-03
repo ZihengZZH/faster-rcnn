@@ -18,6 +18,7 @@
     "rpn_max_overlap": 0.7,
     "classifier_min_overlap": 0.1,
     "classifier_max_overlap": 0.5,
-    "epochs": 2000,
-    "epoch_length": 1000
+    "epochs": 20,
+    "epoch_length": 1000,
+    "bbox_threshold": 0.8
 }

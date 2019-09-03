@@ -1,5 +1,7 @@
 .ipynb_checkpoints
 .vscode
+.DS_Store
 log
 weights
 *.pickle
+__pycache__

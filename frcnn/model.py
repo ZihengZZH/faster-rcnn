@@ -12,6 +12,7 @@ from __future__ import print_function
 import os
 import sys
 import time
+import json
 import random
 import pickle
 import pprint
@@ -58,22 +59,30 @@ class FasterRCNN(object):
                             2. VGG19 \n \
                             3. ResNet50")
         self.cnn_model = convNet
-        self.load_data()
     
     def get_weight_path(self):
         return "%s_weights_tf.h5" % self.cnn_name
 
-    def load_data(self):
+    def load_data_train(self):
         from .utils.parser_pascal import get_data
         self.all_imgs, self.class_count, self.class_mapping = get_data(self.C.train_path)
+        print("num of classes %d" % len(self.class_count))
+
         if 'bg' not in self.class_count:
             self.class_count['bg'] = 0
             self.class_mapping['bg'] = len(self.class_mapping)
+        
         print("training images per classes")
         pprint.pprint(self.class_count)
-        print("num of classes %d" % len(self.class_count))
+
+        print("class ids with labels")
+        pprint.pprint(self.class_mapping)
+
+        with open('./data/class_count_pascal.json', 'w') as fp_count:
+            json.dump(self.class_count, fp_count, indent=4)
+        with open('./data/class_mapping_pascal.json', 'w') as fp_mapping:
+            json.dump(self.class_count, fp_mapping, indent=4)
         random.shuffle(self.all_imgs)
-        num_imgs = len(self.all_imgs)
 
         train_imgs = [s for s in self.all_imgs if s['imageset'] == 'train']
         val_imgs = [s for s in self.all_imgs if s['imageset'] == 'val']
@@ -93,6 +102,29 @@ class FasterRCNN(object):
         self.data_gen_test = data_generators.get_anchor_gt(test_imgs, self.class_count, 
                                         self.C, self.cnn_model.get_img_output_length, 
                                         K.image_dim_ordering(), mode='test')
+    
+    def load_data_test(self, path):
+        self.class_mapping = json.load(open('./data/class_mapping_pascal.json', 'r'))
+        if 'bg' not in self.class_mapping:
+            self.class_mapping['bg'] = len(self.class_mapping)
+        
+        self.class_mapping = {v:k for k, v in self.class_mapping.items()}
+        print("class ids with labels")
+        pprint.pprint(self.class_mapping)
+
+        self.class_to_color = {self.class_mapping[v]: np.random.randint(0, 255, 3) \
+                                for v in self.class_mapping}
+        
+        self.test_images = []
+        self.test_images_bbox = []
+        for idx, img_name in enumerate(sorted(os.listdir(path))):
+            if not img_name.lower().endswith(('.bmp', '.jpeg', '.jpg', '.png', '.tif', '.tiff')):
+                continue
+            print("image found", img_name)
+            self.test_images.append(os.path.join(path, img_name))
+            self.test_images_bbox.append(os.path.join(path, img_name + 'bbox.png'))
+        
+        assert len(self.test_images) == len(self.test_images_bbox)
 
     def region_proposal_net(self, base_layers, num_anchors):
         """
@@ -176,6 +208,8 @@ class FasterRCNN(object):
             callback.writer.flush()
 
     def build(self):
+        self.load_data_train()
+
         input_shape_img = (None, None, 3)
         img_input = Input(shape=input_shape_img)
         roi_input = Input(shape=(None, 4))
@@ -201,6 +235,7 @@ class FasterRCNN(object):
                                         losses.class_loss_regr(len(self.class_count)-1)], 
                                     metrics={'dense_class_{}'.format(len(self.class_count)): 'accuracy'})
         self.model_all.compile(optimizer='sgd', loss='mae')
+
         print(self.model_all.summary())
         plot_model(self.model_region_proposal, show_shapes=True, to_file='./frcnn/images/region_proposal.png')
         plot_model(self.model_classifier, show_shapes=True, to_file='./frcnn/images/classifier.png')
@@ -354,12 +389,153 @@ class FasterRCNN(object):
                             print('Total loss decreased from {} to {}, saving weights'.format(best_loss,curr_loss))
                         best_loss = curr_loss
                         self.model_all.save_weights(self.C.model_path)
-
                     break
+        
         print("traing completed.")
             
-    def test(self):
-        pass
+    def test(self, img_path):
+        self.load_data_test(path=img_path)
+        self.C.horizontal_flips = False
+        self.C.vertical_flips = False
+        self.C.rotate_90 = False
 
+        st = time.time()
 
+        from .utils.data_generators import format_img_size
+        from .utils.data_generators import format_img_channels
+        from .utils.data_generators import format_img
+        from .utils.data_generators import get_real_coordinates
+
+        if self.cnn_name == 'vgg16' or self.cnn_name == 'vgg19':
+            num_feature = 512
+        else:
+            num_feature = 1024
+        
+        input_shape_img = (None, None, 3)
+        input_shape_features = (None, None, num_feature)
+
+        img_input = Input(shape=input_shape_img)
+        roi_input = Input(shape=(self.C.num_roi, 4))
+        feature_map_input = Input(shape=input_shape_features)
+
+        # define the base network (resnet here, can be VGG, Inception, etc)
+        shared_layers = self.cnn_model.nn_base(img_input, trainable=True)
+
+        # define the RPN, built on the base layers
+        num_anchors = len(self.C.anchor_scales) * len(self.C.anchor_ratios)
+        rpn_layers = self.cnn_model.rpn(shared_layers, num_anchors)
+        classifier = self.cnn_model.classifier(feature_map_input, 
+                                                roi_input, 
+                                                self.C.num_roi, 
+                                                nb_classes=len(self.class_mapping), 
+                                                trainable=True)
+
+        model_rpn = Model(img_input, rpn_layers)
+        model_classifier_only = Model([feature_map_input, roi_input], classifier)
+        model_classifier = Model([feature_map_input, roi_input], classifier)
+
+        print('Loading weights from {}'.format(self.C.model_path))
+        model_rpn.load_weights(self.C.model_path, by_name=True)
+        model_classifier.load_weights(self.C.model_path, by_name=True)
+
+        model_rpn.compile(optimizer='sgd', loss='mse')
+        model_classifier.compile(optimizer='sgd', loss='mse')
+
+        for i in range(len(self.test_images)):
+            img = cv2.imread(self.test_images[i])
+            X, ratio = format_img(img, self.C)
+            X = np.transpose(X, (0, 2, 3, 1))
+
+            # get the feature maps and output from the RPN
+            [Y1, Y2, F] = model_rpn.predict(X)
+
+            R = roi_helpers.rpn_to_roi(Y1, Y2, C, K.image_dim_ordering(), overlap_thresh=0.7)
+
+            # convert from (x1,y1,x2,y2) to (x,y,w,h)
+            R[:, 2] -= R[:, 0]
+            R[:, 3] -= R[:, 1]
+
+            # apply the spatial pyramid pooling to the proposed regions
+            bboxes = {}
+            probs = {}
+
+            for jk in range(R.shape[0] // self.C.num_roi+1):
+                ROIs = np.expand_dims(R[self.C.num_roi*jk:self.C.num_roi*(jk+1), :], axis=0)
+                if ROIs.shape[1] == 0:
+                    break
+
+                if jk == R.shape[0] // self.C.num_roi:
+                    # pad R
+                    curr_shape = ROIs.shape
+                    target_shape = (curr_shape[0], self.C.num_roi, curr_shape[2])
+                    ROIs_padded = np.zeros(target_shape).astype(ROIs.dtype)
+                    ROIs_padded[:, :curr_shape[1], :] = ROIs
+                    ROIs_padded[0, curr_shape[1]:, :] = ROIs[0, 0, :]
+                    ROIs = ROIs_padded
+
+                [P_cls, P_regr] = model_classifier_only.predict([F, ROIs])
+
+                for ii in range(P_cls.shape[1]):
+                    if np.max(P_cls[0, ii, :]) < self.C.bbox_threshold or \
+                        np.argmax(P_cls[0, ii, :]) == (P_cls.shape[2] - 1):
+                        continue
+
+                    cls_name = self.class_mapping[np.argmax(P_cls[0, ii, :])]
+                    if cls_name not in bboxes:
+                        bboxes[cls_name] = []
+                        probs[cls_name] = []
+
+                    (x, y, w, h) = ROIs[0, ii, :]
+                    cls_num = np.argmax(P_cls[0, ii, :])
+                    try:
+                        (tx, ty, tw, th) = P_regr[0, ii, 4*cls_num:4*(cls_num+1)]
+                        tx /= C.class_regress_std[0]
+                        ty /= C.class_regress_std[1]
+                        tw /= C.class_regress_std[2]
+                        th /= C.class_regress_std[3]
+                        x, y, w, h = roi_helpers.apply_regr(x, y, w, h, tx, ty, tw, th)
+                    except:
+                        pass
+                    
+                    bboxes[cls_name].append([self.C.stride*x, 
+                                            self.C.stride*y, 
+                                            self.C.stride*(x+w), 
+                                            self.C.stride*(y+h)])
+                    probs[cls_name].append(np.max(P_cls[0, ii, :]))
+
+            all_detections = []
+
+            for key in bboxes:
+                bbox = np.array(bboxes[key])
+                new_boxes, new_probs = roi_helpers.non_max_suppression_fast(bbox, 
+                                        np.array(probs[key]), overlap_thresh=0.5)
+                
+                for jk in range(new_boxes.shape[0]):
+                    (x1, y1, x2, y2) = new_boxes[jk,:]
+                    (real_x1, real_y1, real_x2, real_y2) = get_real_coordinates(ratio, x1, y1, x2, y2)
+
+                    cv2.rectangle(img,(real_x1, real_y1), 
+                                    (real_x2, real_y2), 
+                                    (int(self.class_to_color[key][0]), 
+                                    int(self.class_to_color[key][1]), 
+                                    int(self.class_to_color[key][2])),
+                                    2)
+
+                    textLabel = '{}: {}'.format(key, int(100*new_probs[jk]))
+                    all_detections.append((key, 100*new_probs[jk]))
+
+                    (retval,baseLine) = cv2.getTextSize(textLabel, cv2.FONT_HERSHEY_COMPLEX, 1, 1)
+                    text_org = (real_x1, real_y1-0)
+
+                    cv2.rectangle(img, (text_org[0]-5, text_org[1]+baseLine-5), 
+                                        (text_org[0]+retval[0]+5, text_org[1]-retval[1]-5), 
+                                        (0, 0, 0), 2)
+                    cv2.rectangle(img, (text_org[0]-5,text_org[1]+baseLine-5), 
+                                        (text_org[0]+retval[0]+5, text_org[1]-retval[1]-5), 
+                                        (255, 255, 255), -1)
+                    cv2.putText(img, textLabel, text_org, cv2.FONT_HERSHEY_DUPLEX, 1, (0, 0, 0), 1)
+
+            print('Elapsed time = {}'.format(time.time() - st))
+            print(all_detections)
+            cv2.imwrite(self.test_images_bbox[i], img)
 
