@@ -1,0 +1,23 @@
+{
+    "chair": 2906,
+    "diningtable": 747,
+    "tvmonitor": 826,
+    "sofa": 786,
+    "cat": 1227,
+    "sheep": 994,
+    "person": 10129,
+    "bottle": 1482,
+    "bird": 1221,
+    "car": 2364,
+    "bicycle": 790,
+    "boat": 999,
+    "train": 656,
+    "cow": 702,
+    "horse": 750,
+    "dog": 1541,
+    "aeroplane": 954,
+    "bus": 637,
+    "pottedplant": 1099,
+    "motorbike": 751,
+    "bg": 0
+}

@@ -81,7 +81,7 @@ class FasterRCNN(object):
         with open('./data/class_count_pascal.json', 'w') as fp_count:
             json.dump(self.class_count, fp_count, indent=4)
         with open('./data/class_mapping_pascal.json', 'w') as fp_mapping:
-            json.dump(self.class_count, fp_mapping, indent=4)
+            json.dump(self.class_mapping, fp_mapping, indent=4)
         random.shuffle(self.all_imgs)
 
         train_imgs = [s for s in self.all_imgs if s['imageset'] == 'train']

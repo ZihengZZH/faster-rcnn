@@ -68,7 +68,7 @@ class Config:
         # https://github.com/fchollet/deep-learning-models/releases/download/v0.2/resnet50_weights_th_dim_ordering_th_kernels_notop.h5
         # https://github.com/fchollet/deep-learning-models/releases/download/v0.2/resnet50_weights_tf_dim_ordering_tf_kernels_notop.h5
 
-        GPU = False
+        GPU = bool(self.json['use_GPU'])
 
         self.model_path = './weights/model_frcnn.%s.hdf5' % self.conv_net
         self.train_path = '../data/VOCdevkit' if GPU else '../datasets/VOC2012-dataset'
