@@ -38,7 +38,7 @@ def get_img_output_length(width, height):
 
 def identity_block(input_tensor, kernel_size, filters, stage, block, trainable=True):
     """
-    Identity block within ResNet
+    Identity block within ResNet50
     """
     num_filter1, num_filter2, num_filter3 = filters
     conv_name_base = 'res' + str(stage) + block + '_branch'
@@ -69,7 +69,7 @@ def identity_block(input_tensor, kernel_size, filters, stage, block, trainable=T
 
 def identity_block_timedist(input_tensor, kernel_size, filters, stage, block, trainable=True):
     """
-    Indentity block (time distributed) within ResNet
+    Indentity block (time distributed) within ResNet50
     """
     num_filter1, num_filter2, num_filter3 = filters
     conv_name_base = 'res' + str(stage) + block + '_branch'
@@ -103,7 +103,7 @@ def identity_block_timedist(input_tensor, kernel_size, filters, stage, block, tr
 
 def conv_block(input_tensor, kernel_size, filters, stage, block, strides=(2, 2), trainable=True):
     """
-    Conv block within ResNet
+    Conv block within ResNet50
     """
     num_filter1, num_filter2, num_filter3 = filters
     conv_name_base = 'res' + str(stage) + block + '_branch'
@@ -139,7 +139,7 @@ def conv_block(input_tensor, kernel_size, filters, stage, block, strides=(2, 2),
 
 def conv_block_timedist(input_tensor, kernel_size, filters, stage, block, input_shape, strides=(2, 2), trainable=True):
     """
-    Conv block (time distributed) within ResNet
+    Conv block (time distributed) within ResNet50
     """
     num_filter1, num_filter2, num_filter3 = filters
     conv_name_base = 'res' + str(stage) + block + '_branch'
@@ -182,7 +182,7 @@ def conv_block_timedist(input_tensor, kernel_size, filters, stage, block, input_
 
 def nn_base(input_tensor=None, trainable=False):
     """
-    Neural Net Base of ResNet (key to use)
+    Neural Net Base of ResNet50 (key to use)
     """
     # Determine proper input shape
     input_shape = (None, None, 3)
@@ -228,7 +228,7 @@ def nn_base(input_tensor=None, trainable=False):
 
 def classifier_layers(x, input_shape, trainable=False):
     """
-    Additional Classifier Layer of ResNet
+    Additional Classifier Layer of ResNet50
     """
     # Stage 5
     x = conv_block_timedist(x, 3, [512, 512, 2048], stage=5, block='a', 

@@ -5,6 +5,12 @@ from tqdm import tqdm
 
 
 def get_data(input_path):
+    """
+    Get Data from PASCAL VOC Dataset
+    ---
+    dataset should contain information on width/height/bndboxes/names
+        # para input_path: data directory including 'VOC2012'
+    """
     all_imgs = []
     classes_count = {}
     class_mapping = {}
@@ -17,11 +23,10 @@ def get_data(input_path):
 
     print('Parsing annotation files')
     for data_path in data_paths:
-
         annot_path = os.path.join(data_path, 'Annotations')
         imgs_path = os.path.join(data_path, 'JPEGImages')
 
-        #ImageSets/Main directory (train, val, trainval, test)
+        #ImageSets /Main directory (train, val, trainval, test)
         imgsets_path_trainval = os.path.join(data_path, 'ImageSets', 'Main', 'trainval.txt')
         imgsets_path_train = os.path.join(data_path, 'ImageSets', 'Main', 'train.txt')
         imgsets_path_val = os.path.join(data_path, 'ImageSets', 'Main', 'val.txt')
@@ -44,7 +49,7 @@ def get_data(input_path):
             for line in f:
                 val_files.append(line.strip() + '.jpg')
 
-        # test-set not included in pascal VOC 2012
+        # test-set (default) not included in pascal VOC 2012
         if os.path.isfile(imgsets_path_test):
             with open(imgsets_path_test) as f:
                 for line in f:
@@ -54,8 +59,7 @@ def get_data(input_path):
         annots = [os.path.join(annot_path, s) for s in os.listdir(annot_path)]
         idx = 0
 
-        annots = tqdm(annots)
-        for annot in annots:
+        for annot in tqdm(annots):
             exist_flag = False
             idx += 1
             annots.set_description("Processing %s" % annot.split(os.sep)[-1])
@@ -69,8 +73,10 @@ def get_data(input_path):
             element_height = int(element.find('size').find('height').text)
 
             if len(element_objs) > 0:
-                annotation_data = {'filepath': os.path.join(imgs_path, element_filename), 'width': element_width,
-                                   'height': element_height, 'bboxes': []}
+                annotation_data = {'filepath': os.path.join(imgs_path, element_filename), 
+                                    'width': element_width,
+                                    'height': element_height, 
+                                    'bboxes': []}
 
                 annotation_data['image_id'] = idx
 
@@ -106,14 +112,15 @@ def get_data(input_path):
                 if class_name not in class_mapping:
                     class_mapping[class_name] = len(class_mapping) 
 
+                # find the bounding boxes info
                 obj_bbox = element_obj.find('bndbox')
                 x1 = int(round(float(obj_bbox.find('xmin').text)))
                 y1 = int(round(float(obj_bbox.find('ymin').text)))
                 x2 = int(round(float(obj_bbox.find('xmax').text)))
                 y2 = int(round(float(obj_bbox.find('ymax').text)))
                 difficulty = int(element_obj.find('difficult').text) == 1
-                annotation_data['bboxes'].append(
-                                                {'class': class_name, 
+
+                annotation_data['bboxes'].append({'class': class_name, 
                                                 'x1': x1, 
                                                 'x2': x2, 
                                                 'y1': y1, 
@@ -121,6 +128,7 @@ def get_data(input_path):
                                                 'difficult': difficulty})
             all_imgs.append(annotation_data)
 
+            # visualise bounding boxes
             if visualise:
                 img = cv2.imread(annotation_data['filepath'])
                 for bbox in annotation_data['bboxes']:

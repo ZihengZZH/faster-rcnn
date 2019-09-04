@@ -23,6 +23,14 @@ def get_img_output_length(width, height):
 def nn_base(input_tensor=None, trainable=False):
     """
     Neural Net Base of VGG16 (key to use)
+    ---
+    depth64     (3x3 conv): conv1_1 / conv1_2
+    depth128    (3x3 conv): conv2_1 / conv2_2
+    depth256    (3x3 conv): conv3_1 / conv3_2 / conv3_3
+    depth512    (3x3 conv): conv4_1 / conv4_2 / conv4_3
+    depth512    (3x3 conv): conv5_1 / conv5_2 / conv5_3
+    size4096     fully:     fc1 / fc2
+    size1000     softmax
     """
     # Determine proper input shape
     input_shape = (None, None, 3)
@@ -34,7 +42,6 @@ def nn_base(input_tensor=None, trainable=False):
             img_input = Input(tensor=input_tensor, shape=input_shape)
         else:
             img_input = input_tensor
-    # batchnorm_axis = 3
     
     # Block 1
     x = Convolution2D(64, (3, 3), activation='relu', padding='same', name='block1_conv1')(img_input)
