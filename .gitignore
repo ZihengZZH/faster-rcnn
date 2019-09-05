@@ -5,3 +5,6 @@ log
 weights
 *.pickle
 __pycache__
+.nfs*
+/images/test-images
+/images/*.png

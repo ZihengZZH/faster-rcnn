@@ -394,6 +394,8 @@ class FasterRCNN(object):
         print("traing completed.")
             
     def test(self, img_path):
+        import cv2 
+
         self.load_data_test(path=img_path)
         self.C.horizontal_flips = False
         self.C.vertical_flips = False
@@ -423,15 +425,16 @@ class FasterRCNN(object):
 
         # define the RPN, built on the base layers
         num_anchors = len(self.C.anchor_scales) * len(self.C.anchor_ratios)
-        rpn_layers = self.cnn_model.rpn(shared_layers, num_anchors)
-        classifier = self.cnn_model.classifier(feature_map_input, 
-                                                roi_input, 
-                                                self.C.num_roi, 
-                                                nb_classes=len(self.class_mapping), 
-                                                trainable=True)
+        rpn_layers = self.region_proposal_net(shared_layers, num_anchors)
+        classifier = self.classifier(feature_map_input, 
+                                    self.cnn_model.classifier_layers, 
+                                    roi_input, 
+                                    self.C.num_roi, 
+                                    num_class=len(self.class_mapping), 
+                                    trainable=True)
 
         model_rpn = Model(img_input, rpn_layers)
-        model_classifier_only = Model([feature_map_input, roi_input], classifier)
+        # model_classifier_only = Model([feature_map_input, roi_input], classifier)
         model_classifier = Model([feature_map_input, roi_input], classifier)
 
         print('Loading weights from {}'.format(self.C.model_path))
@@ -449,7 +452,7 @@ class FasterRCNN(object):
             # get the feature maps and output from the RPN
             [Y1, Y2, F] = model_rpn.predict(X)
 
-            R = roi_helpers.rpn_to_roi(Y1, Y2, C, K.image_dim_ordering(), overlap_thresh=0.7)
+            R = roi_helpers.rpn_to_roi(Y1, Y2, self.C, K.image_dim_ordering(), overlap_thresh=0.5)
 
             # convert from (x1,y1,x2,y2) to (x,y,w,h)
             R[:, 2] -= R[:, 0]
@@ -473,7 +476,7 @@ class FasterRCNN(object):
                     ROIs_padded[0, curr_shape[1]:, :] = ROIs[0, 0, :]
                     ROIs = ROIs_padded
 
-                [P_cls, P_regr] = model_classifier_only.predict([F, ROIs])
+                [P_cls, P_regr] = model_classifier.predict([F, ROIs])
 
                 for ii in range(P_cls.shape[1]):
                     if np.max(P_cls[0, ii, :]) < self.C.bbox_threshold or \
