@@ -59,7 +59,8 @@ def get_data(input_path):
         annots = [os.path.join(annot_path, s) for s in os.listdir(annot_path)]
         idx = 0
 
-        for annot in tqdm(annots):
+        annots = tqdm(annots)
+        for annot in annots:
             exist_flag = False
             idx += 1
             annots.set_description("Processing %s" % annot.split(os.sep)[-1])

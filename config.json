@@ -18,8 +18,8 @@
     "rpn_max_overlap": 0.7,
     "classifier_min_overlap": 0.1,
     "classifier_max_overlap": 0.5,
-    "epochs": 20,
+    "epochs": 200,
     "epoch_length": 1000,
-    "bbox_threshold": 0.8,
-    "use_GPU": 0
+    "bbox_threshold": 0.7,
+    "use_GPU": 1
 }

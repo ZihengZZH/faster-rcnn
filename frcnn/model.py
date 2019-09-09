@@ -122,7 +122,7 @@ class FasterRCNN(object):
                 continue
             print("image found", img_name)
             self.test_images.append(os.path.join(path, img_name))
-            self.test_images_bbox.append(os.path.join(path, img_name + 'bbox.png'))
+            self.test_images_bbox.append(os.path.join(path, img_name + '.bbox.png'))
         
         assert len(self.test_images) == len(self.test_images_bbox)
 
@@ -208,8 +208,6 @@ class FasterRCNN(object):
             callback.writer.flush()
 
     def build(self):
-        self.load_data_train()
-
         input_shape_img = (None, None, 3)
         img_input = Input(shape=input_shape_img)
         roi_input = Input(shape=(None, 4))
@@ -434,7 +432,7 @@ class FasterRCNN(object):
                                     trainable=True)
 
         model_rpn = Model(img_input, rpn_layers)
-        # model_classifier_only = Model([feature_map_input, roi_input], classifier)
+        model_classifier_only = Model([feature_map_input, roi_input], classifier)
         model_classifier = Model([feature_map_input, roi_input], classifier)
 
         print('Loading weights from {}'.format(self.C.model_path))
@@ -452,7 +450,7 @@ class FasterRCNN(object):
             # get the feature maps and output from the RPN
             [Y1, Y2, F] = model_rpn.predict(X)
 
-            R = roi_helpers.rpn_to_roi(Y1, Y2, self.C, K.image_dim_ordering(), overlap_thresh=0.5)
+            R = roi_helpers.rpn_to_roi(Y1, Y2, self.C, K.image_dim_ordering(), overlap_thresh=0.7)
 
             # convert from (x1,y1,x2,y2) to (x,y,w,h)
             R[:, 2] -= R[:, 0]
@@ -476,7 +474,7 @@ class FasterRCNN(object):
                     ROIs_padded[0, curr_shape[1]:, :] = ROIs[0, 0, :]
                     ROIs = ROIs_padded
 
-                [P_cls, P_regr] = model_classifier.predict([F, ROIs])
+                [P_cls, P_regr] = model_classifier_only.predict([F, ROIs])
 
                 for ii in range(P_cls.shape[1]):
                     if np.max(P_cls[0, ii, :]) < self.C.bbox_threshold or \
@@ -528,17 +526,18 @@ class FasterRCNN(object):
                     all_detections.append((key, 100*new_probs[jk]))
 
                     (retval,baseLine) = cv2.getTextSize(textLabel, cv2.FONT_HERSHEY_COMPLEX, 1, 1)
-                    text_org = (real_x1, real_y1-0)
+                    text_org = (real_x1, real_y1+10)
 
-                    cv2.rectangle(img, (text_org[0]-5, text_org[1]+baseLine-5), 
-                                        (text_org[0]+retval[0]+5, text_org[1]-retval[1]-5), 
+                    cv2.rectangle(img, (text_org[0], text_org[1]+baseLine), 
+                                        (text_org[0]+retval[0]+10, text_org[1]-retval[1]-10), 
                                         (0, 0, 0), 2)
-                    cv2.rectangle(img, (text_org[0]-5,text_org[1]+baseLine-5), 
-                                        (text_org[0]+retval[0]+5, text_org[1]-retval[1]-5), 
+                    cv2.rectangle(img, (text_org[0],text_org[1]+baseLine), 
+                                        (text_org[0]+retval[0]+10, text_org[1]-retval[1]-10), 
                                         (255, 255, 255), -1)
                     cv2.putText(img, textLabel, text_org, cv2.FONT_HERSHEY_DUPLEX, 1, (0, 0, 0), 1)
 
             print('Elapsed time = {}'.format(time.time() - st))
-            print(all_detections)
-            cv2.imwrite(self.test_images_bbox[i], img)
+            print(self.test_images[i], all_detections)
+            if all_detections:
+                cv2.imwrite(self.test_images_bbox[i], img)
 

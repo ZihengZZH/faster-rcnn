@@ -1,6 +1,7 @@
 from frcnn.model import FasterRCNN
 
 fast = FasterRCNN()
-# fast.build()
-# fast.train()
-fast.test('./images')
+fast.load_data_train()
+fast.build()
+fast.train()
+fast.test('./images/test-images')
