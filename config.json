@@ -20,6 +20,6 @@
     "classifier_max_overlap": 0.5,
     "epochs": 200,
     "epoch_length": 1000,
-    "bbox_threshold": 0.7,
+    "bbox_threshold": 0.5,
     "use_GPU": 1
 }

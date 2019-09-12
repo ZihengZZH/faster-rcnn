@@ -122,7 +122,7 @@ class FasterRCNN(object):
                 continue
             print("image found", img_name)
             self.test_images.append(os.path.join(path, img_name))
-            self.test_images_bbox.append(os.path.join(path, img_name + '.bbox.png'))
+            self.test_images_bbox.append(os.path.join(path, img_name + '.bbox.jpg'))
         
         assert len(self.test_images) == len(self.test_images_bbox)
 
@@ -522,11 +522,11 @@ class FasterRCNN(object):
                                     int(self.class_to_color[key][2])),
                                     2)
 
-                    textLabel = '{}: {}'.format(key, int(100*new_probs[jk]))
-                    all_detections.append((key, 100*new_probs[jk]))
+                    textLabel = '%s: %.3f' % (key, new_probs[jk])
+                    all_detections.append((key, new_probs[jk]))
 
                     (retval,baseLine) = cv2.getTextSize(textLabel, cv2.FONT_HERSHEY_COMPLEX, 1, 1)
-                    text_org = (real_x1, real_y1+10)
+                    text_org = (real_x1+10, real_y1+20)
 
                     cv2.rectangle(img, (text_org[0], text_org[1]+baseLine), 
                                         (text_org[0]+retval[0]+10, text_org[1]-retval[1]-10), 
