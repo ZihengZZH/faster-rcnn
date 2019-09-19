@@ -128,4 +128,3 @@ frcnn
 ## REFERENCE:
 * [Faster R-CNN: Towards Real-Time Object Detection with Region Proposal Networks, 2015](https://arxiv.org/pdf/1506.01497.pdf)
 * [Keras-FasterRCNN](https://github.com/you359/Keras-FasterRCNN)
-* [keras-frcnn](https://github.com/yhenon/keras-frcnn/)

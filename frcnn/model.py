@@ -2,7 +2,9 @@
 Faster R-CNN in Keras
 ---
 # Reference:
-
+    [Faster R-CNN: Towards Real-Time Object Detection with Region Proposal Networks, 2015]
+    https://arxiv.org/pdf/1506.01497.pdf
+    https://github.com/you359/Keras-FasterRCNN
 """
 
 from __future__ import absolute_import
@@ -17,7 +19,6 @@ import random
 import pickle
 import pprint
 import numpy as np
-from optparse import OptionParser
 
 from keras.layers import Input, Add, Dense
 from keras.layers import Activation, Flatten
@@ -43,6 +44,9 @@ class FasterRCNN(object):
     """
     Faster R-CNN
     ---
+    Faster R-CNN implementation in Keras (tensorflow) 
+        ConvNet including VGG16, VGG19, and ResNet50 (in cnn/)
+        Region Proposal Network (in this class)
     """
     def __init__(self):
         self.C = config.Config()
@@ -64,8 +68,8 @@ class FasterRCNN(object):
         return "%s_weights_tf.h5" % self.cnn_name
 
     def load_data_train(self):
-        from .utils.parser_pascal import get_data
-        self.all_imgs, self.class_count, self.class_mapping = get_data(self.C.train_path)
+        from .utils.data_loader import get_data
+        self.all_imgs, self.class_count, self.class_mapping = get_data(self.C.train_path_voc, self.C.train_path_coco)
         print("num of classes %d" % len(self.class_count))
 
         if 'bg' not in self.class_count:
@@ -78,9 +82,9 @@ class FasterRCNN(object):
         print("class ids with labels")
         pprint.pprint(self.class_mapping)
 
-        with open('./data/class_count_pascal.json', 'w') as fp_count:
+        with open('./data/class_count.json', 'w') as fp_count:
             json.dump(self.class_count, fp_count, indent=4)
-        with open('./data/class_mapping_pascal.json', 'w') as fp_mapping:
+        with open('./data/class_mapping.json', 'w') as fp_mapping:
             json.dump(self.class_mapping, fp_mapping, indent=4)
         random.shuffle(self.all_imgs)
 
@@ -104,7 +108,7 @@ class FasterRCNN(object):
                                         K.image_dim_ordering(), mode='test')
     
     def load_data_test(self, path):
-        self.class_mapping = json.load(open('./data/class_mapping_pascal.json', 'r'))
+        self.class_mapping = json.load(open('./data/class_mapping.json', 'r'))
         if 'bg' not in self.class_mapping:
             self.class_mapping['bg'] = len(self.class_mapping)
         
@@ -129,10 +133,10 @@ class FasterRCNN(object):
     def region_proposal_net(self, base_layers, num_anchors):
         """
         Region Proposal Network
-        --
+        ---
         Args:
-            base_layers:
-            num_anchors:
+            base_layers: conv layers in convNet (inc. pooling)
+            num_anchors: number of anchors used in prediction (cls./reg.)
         """
         if self.cnn_name == 'vgg16':
             proposal_dim = 256
@@ -158,13 +162,15 @@ class FasterRCNN(object):
 
     def classifier(self, base_layers, classifier_layer, input_roi, num_roi, num_class, trainable=True):
         """
+        Classifier (Last Layer)
+        ---
         Args:
-            base_layers:
-            classifier_layer:
-            input_roi:
-            num_roi:
-            num_class:
-            trainable:
+            base_layers: conv layers in convNet (inc. pooling)
+            classifier_layer: classifier layer to determine objects
+            input_roi: number of ROIs processed once
+            num_roi: number of ROIs (user-defined)
+            num_class: number of classes
+            trainable: whether or not trainable
         """
         if self.cnn_name == 'vgg16':
             pooling_regions = 7
@@ -208,6 +214,9 @@ class FasterRCNN(object):
             callback.writer.flush()
 
     def build(self):
+        """
+        Build Faster R-CNN model
+        """
         input_shape_img = (None, None, 3)
         img_input = Input(shape=input_shape_img)
         roi_input = Input(shape=(None, 4))
@@ -234,12 +243,15 @@ class FasterRCNN(object):
                                     metrics={'dense_class_{}'.format(len(self.class_count)): 'accuracy'})
         self.model_all.compile(optimizer='sgd', loss='mae')
 
-        print(self.model_all.summary())
+        # print(self.model_all.summary())
         plot_model(self.model_region_proposal, show_shapes=True, to_file='./frcnn/images/region_proposal.png')
         plot_model(self.model_classifier, show_shapes=True, to_file='./frcnn/images/classifier.png')
         plot_model(self.model_all, show_shapes=True, to_file='./frcnn/images/model_all.png')
 
     def train(self):
+        """
+        Train Faster R-CNN model
+        """
         if not os.path.isdir(self.C.log_path):
             os.mkdir(self.C.log_path)
         
@@ -308,16 +320,16 @@ class FasterRCNN(object):
                         selected_pos_samples = pos_samples.tolist()
                     else:
                         selected_pos_samples = np.random.choice(pos_samples, 
-                                                                self.C.num_roi//2, 
-                                                                replace=False).tolist()
+                                                self.C.num_roi//2, 
+                                                replace=False).tolist()
                     try:
                         selected_neg_samples = np.random.choice(neg_samples, 
-                                                                self.C.num_roi-len(selected_pos_samples), 
-                                                                replace=False).tolist()
+                                                self.C.num_roi-len(selected_pos_samples), 
+                                                replace=False).tolist()
                     except:
                         selected_neg_samples = np.random.choice(neg_samples, 
-                                                                self.C.num_roi-len(selected_pos_samples), 
-                                                                replace=True).tolist()
+                                                self.C.num_roi-len(selected_pos_samples), 
+                                                replace=True).tolist()
                     sel_samples = selected_pos_samples + selected_neg_samples
                 
                 else:
@@ -348,8 +360,8 @@ class FasterRCNN(object):
                 progbar.update(iter_num, 
                             [('rpn_cls', np.mean(losses[:iter_num, 0])), 
                             ('rpn_regr', np.mean(losses[:iter_num, 1])),
-                            ('detector_cls', np.mean(losses[:iter_num, 2])), 
-                            ('detector_regr', np.mean(losses[:iter_num, 3]))])
+                            ('det_cls', np.mean(losses[:iter_num, 2])), 
+                            ('det_regr', np.mean(losses[:iter_num, 3]))])
 
                 if iter_num == epoch_length:
                     loss_rpn_cls = np.mean(losses[:, 0])
@@ -392,6 +404,9 @@ class FasterRCNN(object):
         print("traing completed.")
             
     def test(self, img_path):
+        """
+        Evaluate Faster R-CNN model (cv2 handling image I/O)
+        """
         import cv2 
 
         self.load_data_test(path=img_path)
@@ -409,7 +424,7 @@ class FasterRCNN(object):
         if self.cnn_name == 'vgg16' or self.cnn_name == 'vgg19':
             num_feature = 512
         else:
-            num_feature = 1024
+            num_feature = 1024  # any other convNet
         
         input_shape_img = (None, None, 3)
         input_shape_features = (None, None, num_feature)
@@ -418,7 +433,7 @@ class FasterRCNN(object):
         roi_input = Input(shape=(self.C.num_roi, 4))
         feature_map_input = Input(shape=input_shape_features)
 
-        # define the base network (resnet here, can be VGG, Inception, etc)
+        # define the base network
         shared_layers = self.cnn_model.nn_base(img_input, trainable=True)
 
         # define the RPN, built on the base layers

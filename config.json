@@ -18,8 +18,12 @@
     "rpn_max_overlap": 0.7,
     "classifier_min_overlap": 0.1,
     "classifier_max_overlap": 0.5,
-    "epochs": 200,
-    "epoch_length": 1000,
+    "epochs": 50,
+    "epoch_length": 100,
     "bbox_threshold": 0.5,
-    "use_GPU": 1
+    "use_GPU": 1,
+    "model_path": "",
+    "train_path_voc": "../data/VOCdevkit",
+    "train_path_coco": "../data/COCO",
+    "log": "./log"
 }
