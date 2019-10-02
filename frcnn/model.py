@@ -67,9 +67,16 @@ class FasterRCNN(object):
     def get_weight_path(self):
         return "%s_weights_tf.h5" % self.cnn_name
 
-    def load_data_train(self):
-        from .utils.data_loader import get_data
-        self.all_imgs, self.class_count, self.class_mapping = get_data(self.C.train_path_voc, self.C.train_path_coco)
+    def load_data_train(self, voc_only=False, coco_only=False):
+        if not voc_only and not coco_only:
+            from .utils.data_loader import get_data
+            self.all_imgs, self.class_count, self.class_mapping = get_data(self.C.train_path_voc, self.C.train_path_coco)
+        if not voc_only and coco_only:
+            from .utils.parser_coco import get_data
+            self.all_imgs, self.class_count, self.class_mapping = get_data(self.C.train_path_coco)
+        if voc_only and not coco_only:
+            from .utils.parser_pascal import get_data
+            self.all_imgs, self.class_count, self.class_mapping = get_data(self.C.train_path_voc)
         print("num of classes %d" % len(self.class_count))
 
         if 'bg' not in self.class_count:
@@ -99,13 +106,13 @@ class FasterRCNN(object):
         # groundtruth anchor
         self.data_gen_train = data_generators.get_anchor_gt(train_imgs, self.class_count, 
                                         self.C, self.cnn_model.get_img_output_length, 
-                                        K.image_dim_ordering(), mode='train')
+                                        K.image_data_format(), mode='train')
         self.data_gen_val = data_generators.get_anchor_gt(val_imgs, self.class_count, 
                                         self.C, self.cnn_model.get_img_output_length, 
-                                        K.image_dim_ordering(), mode='val')
+                                        K.image_data_format(), mode='val')
         self.data_gen_test = data_generators.get_anchor_gt(test_imgs, self.class_count, 
                                         self.C, self.cnn_model.get_img_output_length, 
-                                        K.image_dim_ordering(), mode='test')
+                                        K.image_data_format(), mode='test')
     
     def load_data_test(self, path):
         self.class_mapping = json.load(open('./data/class_mapping.json', 'r'))
@@ -255,7 +262,7 @@ class FasterRCNN(object):
         if not os.path.isdir(self.C.log_path):
             os.mkdir(self.C.log_path)
         
-        callback = TensorBoard(self.C.log_path)
+        callback = TensorBoard(self.C.log_path, write_graph=True, write_images=True)
         callback.set_model(self.model_all)
 
         epoch_length = self.C.epoch_length
@@ -289,7 +296,7 @@ class FasterRCNN(object):
 
                 P_rpn = self.model_region_proposal.predict_on_batch(X)
 
-                R = roi_helpers.rpn_to_roi(P_rpn[0], P_rpn[1], self.C, K.image_dim_ordering(), use_regr=True, overlap_thresh=0.7, max_boxes=300)
+                R = roi_helpers.rpn_to_roi(P_rpn[0], P_rpn[1], self.C, K.image_data_format(), use_regr=True, overlap_thresh=0.7, max_boxes=300)
                 # note: calc_iou converts from (x1,y1,x2,y2) to (x,y,w,h) format
                 X2, Y1, Y2, IouS = roi_helpers.calc_iou(R, img_data, self.C, self.class_mapping)
 
@@ -465,7 +472,7 @@ class FasterRCNN(object):
             # get the feature maps and output from the RPN
             [Y1, Y2, F] = model_rpn.predict(X)
 
-            R = roi_helpers.rpn_to_roi(Y1, Y2, self.C, K.image_dim_ordering(), overlap_thresh=0.7)
+            R = roi_helpers.rpn_to_roi(Y1, Y2, self.C, K.image_data_format(), overlap_thresh=0.7)
 
             # convert from (x1,y1,x2,y2) to (x,y,w,h)
             R[:, 2] -= R[:, 0]

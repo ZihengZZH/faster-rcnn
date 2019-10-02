@@ -70,7 +70,7 @@ class Config:
 
         GPU = bool(self.config_tmp['use_GPU'])
 
-        self.model_path = './weights/model_frcnn_voc+coco.%s.hdf5' % self.conv_net
+        self.model_path = './weights/model_frcnn_voc.%s.hdf5' % self.conv_net
         self.train_path_voc = self.config_tmp['train_path_voc']
         self.train_path_coco = self.config_tmp['train_path_coco']
         self.log_path = './log'
